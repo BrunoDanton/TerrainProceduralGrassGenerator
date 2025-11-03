@@ -92,7 +92,7 @@ public class TerrainGrassGenerator : MonoBehaviour
     public float windSpeed = 1f;
 
     [Tooltip("Força do vento (maior = mais movimento)")]
-    [Range(0f, 10f)]
+    [Range(0f, 1f)]
     public float windStrength = 0.5f;
 
     [Tooltip("Direção principal do vento (graus)")]
@@ -100,7 +100,7 @@ public class TerrainGrassGenerator : MonoBehaviour
     public float windDirection = 45f;
 
     [Tooltip("Turbulência do vento (variação aleatória)")]
-    [Range(0f, 5f)]
+    [Range(0f, 1f)]
     public float windTurbulence = 0.3f;
 
     [Header("8. Grama Interativa (Breath of the Wild Style)")]
@@ -115,7 +115,7 @@ public class TerrainGrassGenerator : MonoBehaviour
     public float interactionRadius = 3f;
 
     [Tooltip("Força da interação")]
-    [Range(0f, 100f)]
+    [Range(0f, 1.5f)]
     public float interactionStrength = 1f;
 
     [Header("9. Otimização Avançada")]
