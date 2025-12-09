@@ -14,6 +14,7 @@ public class TerrainGrassGeneratorEditor : Editor
     private bool _showInteractionSettings = true;
     private bool _showOptimizationSettings = true;
     private bool _showMaterialSettings = true;
+    private bool _showClumpingSettings = true;
     private bool _showDebugTools = true;
 
     private readonly string[] _presetNames = new string[]
@@ -49,6 +50,7 @@ public class TerrainGrassGeneratorEditor : Editor
         DrawInteractionSection();
         DrawOptimizationSection();
         DrawMaterialSection();
+        DrawClumpingSection();
         DrawDebugSection();
 
         serializedObject.ApplyModifiedProperties();
@@ -312,12 +314,12 @@ public class TerrainGrassGeneratorEditor : Editor
     private void DrawMaterialSection()
     {
         _showMaterialSettings = EditorGUILayout.BeginFoldoutHeaderGroup(_showMaterialSettings, "🎨 Material");
-        
+
         if (_showMaterialSettings)
         {
             EditorGUI.indentLevel++;
             DrawPropertyWithReset("grassMaterial", "Material da Grama");
-            
+
             if (_target.grassMaterial == null)
             {
                 EditorGUILayout.HelpBox(
@@ -329,10 +331,36 @@ public class TerrainGrassGeneratorEditor : Editor
             {
                 bool hasWindParams = _target.grassMaterial.HasProperty("_WindParams");
                 bool hasInteraction = _target.grassMaterial.HasProperty("_InteractionPos");
-                
+
                 EditorGUILayout.LabelField("Status do Shader:", EditorStyles.boldLabel);
                 EditorGUILayout.LabelField($"   {(hasWindParams ? "✅" : "❌")} _WindParams (Vento)");
                 EditorGUILayout.LabelField($"   {(hasInteraction ? "✅" : "❌")} _InteractionPos (Interação)");
+            }
+
+            EditorGUI.indentLevel--;
+        }
+
+        EditorGUILayout.EndFoldoutHeaderGroup();
+        EditorGUILayout.Space(5);
+    }
+    
+    private void DrawClumpingSection()
+    {
+        // O emoji 🍀 é opcional, mas ajuda na organização
+        _showClumpingSettings = EditorGUILayout.BeginFoldoutHeaderGroup(_showClumpingSettings, "🍀 Clumping (Ghost of Tsushima)");
+        
+        if (_showClumpingSettings)
+        {
+            EditorGUI.indentLevel++;
+            
+            // Usamos a função DrawPropertyWithReset para desenhar as variáveis
+            DrawPropertyWithReset("enableClumping", "Habilitar Clumping");
+            
+            // Só mostra as outras opções se o clumping estiver ativo
+            if (_target.enableClumping)
+            {
+                DrawPropertyWithReset("clumpingScale", "Escala do Clumping");
+                DrawPropertyWithReset("clumpingStrength", "Força do Clumping");
             }
             
             EditorGUI.indentLevel--;
@@ -424,6 +452,9 @@ public class TerrainGrassGeneratorEditor : Editor
             case "maxVerticesPerChunk": prop.intValue = 60000; break;
             case "aoIntensity": prop.floatValue = 0.3f; break;
             case "heightVariationAmount": prop.floatValue = 0.2f; break;
+            case "enableClumping": prop.boolValue = true; break;
+            case "clumpingScale": prop.floatValue = 10f; break;
+            case "clumpingStrength": prop.floatValue = 0.5f; break;
         }
     }
 
