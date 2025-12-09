@@ -1,9 +1,9 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Numerics;
 
 #if UNITY_EDITOR
 using UnityEditor;
-using System.IO;
 #endif
 
 /// <summary>
@@ -143,6 +143,13 @@ public class TerrainGrassGenerator : MonoBehaviour
     [Tooltip("Material - IMPORTANTE: Use shader com Vertex Color e suporte a _WindParams")]
     public Material grassMaterial;
 
+    [Header("11. Clumping (Ghost of Tsushima)")]
+    public bool enableClumping = true;
+    [Range(0.01f, 50f)]
+    public float clumpingScale = 10f;
+    [Range(0f, 1f)]
+    public float clumpingStrength = 0.5f;
+
     // Classes internas 
     [System.Serializable]
     public class GrassLayerConfig
@@ -178,9 +185,13 @@ public class TerrainGrassGenerator : MonoBehaviour
     // Para culling dinâmico
     private List<GrassChunk> _activeChunks = new List<GrassChunk>();
     private Camera _mainCamera;
+    private Material _interactionFadeMaterial;
+    private RenderTexture _interactionMap1;
+    private RenderTexture _interactionMap2;
+    private bool _isFirstMapActive = true;
 
     // Para vento (atualizado via shader)
-    private Vector4 _windParams;
+    private UnityEngine.Vector4 _windParams;
     private static readonly int WindStrengthID = Shader.PropertyToID("_WindStrength");
     private static readonly int WindParamsID = Shader.PropertyToID("_WindParams");
     private static readonly int InteractionPosID = Shader.PropertyToID("_InteractionPos");
@@ -192,7 +203,7 @@ public class TerrainGrassGenerator : MonoBehaviour
         public string name = "Tipo de Lâmina";
         
         [Header("Forma")]
-        public Vector2 bladeSize = new Vector2(0.05f, 1f);
+        public UnityEngine.Vector2 bladeSize = new UnityEngine.Vector2(0.05f, 1f);
         public List<BladeSegment> segments = new List<BladeSegment>();
         
         [Header("Aparência")]
@@ -238,7 +249,7 @@ public class TerrainGrassGenerator : MonoBehaviour
         public GameObject gameObject;
         public MeshRenderer renderer;
         public Bounds bounds;
-        public Vector3 center;
+        public UnityEngine.Vector3 center;
         public float distanceToCamera;
         public int lodLevel; // 0 = full, 1 = medium, 2 = low
     }
@@ -262,7 +273,7 @@ public class TerrainGrassGenerator : MonoBehaviour
 
         _grassParent = new GameObject("GrassContainer");
         _grassParent.transform.SetParent(transform);
-        _grassParent.transform.localPosition = Vector3.zero;
+        _grassParent.transform.localPosition = UnityEngine.Vector3.zero;
 
         // Criamos a quantidade de linhas e colunas de chunks que vão haver no terreno 
         int chunkCountX = Mathf.CeilToInt((float)_terrainWidth / chunkSize);
@@ -276,9 +287,9 @@ public class TerrainGrassGenerator : MonoBehaviour
             for (int chunkZ = 0; chunkZ < chunkCountZ; chunkZ++)
             {
                 // Criamos a lista de vértices, triangulos, UVs e cores para todas as lâminas do terreno
-                List<Vector3> verts = new List<Vector3>();
+                List<UnityEngine.Vector3> verts = new List<UnityEngine.Vector3>();
                 List<int> tris = new List<int>();
-                List<Vector2> uvs = new List<Vector2>();
+                List<UnityEngine.Vector2> uvs = new List<UnityEngine.Vector2>();
                 List<Color> colors = new List<Color>();
 
                 // Declaramos o começo e o fim de cada coordenada da chunk referente ao terreno
@@ -288,7 +299,7 @@ public class TerrainGrassGenerator : MonoBehaviour
                 int zEnd = Mathf.Min(zStart + chunkSize, _terrainHeight);
 
                 // Inicializamos variáveis nulas, por hora
-                Vector3 chunkCenter = Vector3.zero;
+                UnityEngine.Vector3 chunkCenter = UnityEngine.Vector3.zero;
                 int grassCount = 0;
 
                 // Agora, fazemos o mesmo processo para encontrar os pontos de possível geração de grama
@@ -305,7 +316,10 @@ public class TerrainGrassGenerator : MonoBehaviour
 
                         // Ruído que define pontos onde a grama pode ser gerada, se a camada permitir a geração
                         float noise = Mathf.PerlinNoise(normX * perlinNoiseScale, normZ * perlinNoiseScale);
-                        if (noise <= minimumNoiseAcceptableValue)
+                        float clumpNoise = VoronoiNoise.GrassClumps(normX, normZ, clumpingScale);
+
+                        float finalNoise = noise * Mathf.Lerp(1.0f, clumpNoise, clumpingStrength);
+                        if (finalNoise <= minimumNoiseAcceptableValue)
                             continue;
 
                         // Obtemos a cor do terreno no ponto atual
@@ -316,14 +330,14 @@ public class TerrainGrassGenerator : MonoBehaviour
                         // Utilizamos a variável normalizada para descobrir a sua coordenada referente no mapa do mundo
                         float worldX = normX * _terrainData.size.x;
                         float worldZ = normZ * _terrainData.size.z;
-                        float worldY = _terrain.SampleHeight(new Vector3(worldX, 0, worldZ));
+                        float worldY = _terrain.SampleHeight(new UnityEngine.Vector3(worldX, 0, worldZ));
 
                         // Atribuimos esses dados à um vetor
-                        Vector3 pos = new Vector3(worldX, worldY, worldZ);
+                        UnityEngine.Vector3 pos = new UnityEngine.Vector3(worldX, worldY, worldZ);
 
                         // Descobrimos o vetor normal do terreno (perpendicular) nesse ponto e o aplicamos à rotação do ponto de geração
-                        Vector3 normal = _terrainData.GetInterpolatedNormal(normX, normZ);
-                        Quaternion slopeRot = Quaternion.FromToRotation(Vector3.up, normal);
+                        UnityEngine.Vector3 normal = _terrainData.GetInterpolatedNormal(normX, normZ);
+                        UnityEngine.Quaternion slopeRot = UnityEngine.Quaternion.FromToRotation(UnityEngine.Vector3.up, normal);
 
                         // Multiplicador de variação de altura baseada em ruído (técnica avançada)
                         float heightMod = 1f;
@@ -349,7 +363,7 @@ public class TerrainGrassGenerator : MonoBehaviour
                             if (Random.value > plantChance) continue;
 
                             // Definimos a posição de uma lâmina
-                            Vector3 instancePos = pos + new Vector3(
+                            UnityEngine.Vector3 instancePos = pos + new UnityEngine.Vector3(
                                 Random.Range(-leafDispersion, leafDispersion),
                                 0,
                                 Random.Range(-leafDispersion, leafDispersion)
@@ -358,13 +372,13 @@ public class TerrainGrassGenerator : MonoBehaviour
 
                             // Rotação aleatória melhorada (evita padrões)
                             float yawAngle = randomizeRotation ? Random.Range(0, 360) : 0;
-                            Quaternion yaw = Quaternion.Euler(0, yawAngle, 0);
-                            Quaternion tilt = Quaternion.Euler(
+                            UnityEngine.Quaternion yaw = UnityEngine.Quaternion.Euler(0, yawAngle, 0);
+                            UnityEngine.Quaternion tilt = UnityEngine.Quaternion.Euler(
                                 Random.Range(selectedType.inclinaçãoMin, selectedType.inclinaçãoMax),
                                 0,
                                 Random.Range(selectedType.inclinaçãoMin, selectedType.inclinaçãoMax)
                             );
-                            Quaternion finalRot = slopeRot * tilt * yaw;
+                            UnityEngine.Quaternion finalRot = slopeRot * tilt * yaw;
 
                             // Modificamos a escala da lâmina (usando valores do tipo)
                             float scale = Random.Range(selectedType.variaçãoEscalaMin, selectedType.variaçãoEscalaMax) * heightMod;
@@ -508,12 +522,12 @@ public class TerrainGrassGenerator : MonoBehaviour
     }
 
     // Cria o gameObject da chunk, contendo todos os seus elementos
-    private GrassChunk CreateChunkObject(int cx, int cz, List<Vector3> v, List<int> t,
-                                         List<Vector2> uv, List<Color> c, Vector3 center)
+    private GrassChunk CreateChunkObject(int cx, int cz, List<UnityEngine.Vector3> v, List<int> t,
+                                         List<UnityEngine.Vector2> uv, List<Color> c, UnityEngine.Vector3 center)
     {
         GameObject chunkObj = new GameObject($"GrassChunk_{cx}_{cz}");
         chunkObj.transform.SetParent(_grassParent.transform);
-        chunkObj.transform.localPosition = Vector3.zero;
+        chunkObj.transform.localPosition = UnityEngine.Vector3.zero;
 
         Mesh m = new Mesh();
         m.name = $"GrassMesh_{cx}_{cz}";
@@ -562,41 +576,130 @@ public class TerrainGrassGenerator : MonoBehaviour
 
         return chunk;
     }
+
+    private void Start()
+    {
+        // É uma boa prática garantir que os dados do terreno estejam prontos
+        if (!InitializeTerrainData()) 
+        {
+            this.enabled = false; // Desabilita o script se o terreno não for válido
+            return;
+        }
+
+        // 1. Pegamos a resolução que discutimos
+        int resolution = _terrainData.heightmapResolution;
+
+        // 2. Criamos um "descritor" para a textura
+        RenderTextureDescriptor descriptor = new RenderTextureDescriptor(
+            resolution,                 // Largura
+            resolution,                 // Altura
+            RenderTextureFormat.ARGBFloat // O formato que armazena 4 floats
+        );
+        
+        // Habilitamos o "acesso de escrita aleatório" (Random Access Write)
+        // Isso é essencial para que shaders possam "pintar" na textura
+        descriptor.enableRandomWrite = true;
+
+        // 3. Criamos nossas duas texturas
+        _interactionMap1 = new RenderTexture(descriptor);
+        _interactionMap1.Create();
+
+        _interactionMap2 = new RenderTexture(descriptor);
+        _interactionMap2.Create();
+
+        // (Vamos precisar carregar o material de fade aqui também, mas faremos isso depois)
+        
+        Debug.Log($"🌾 Mapas de Interação criados com resolução {resolution}x{resolution}");
+    
+    }
+
     // Sistema de Culling e Vento
     private void Update()
     {
-        // Animações de vento e interação
-        
+        // 1. VENTO (Seu código aqui está correto)
         if (enableWind && grassMaterial != null)
         {
             UpdateWindParameters();
         }
 
-        if (enableInteraction && playerTransform != null && grassMaterial != null)
+        // --- INÍCIO DA LÓGICA DE INTERAÇÃO ---
+        if (enableInteraction)
         {
-            UpdateInteraction();
-        }
+            // Verifica se o material de Fade existe.
+            if (_interactionFadeMaterial != null)
+            {
+                // --- INÍCIO DO NOVO SISTEMA (RenderTexture) ---
 
-        // 2. LÓGICA DE CULLING E GAMEPLAY
-        // (Isso só deve rodar em Play Mode, pois depende da _mainCamera)
-        
+                // Define qual textura é a fonte (antiga) e qual é o destino (nova)
+                RenderTexture source, destination;
+                if (_isFirstMapActive)
+                {
+                    source = _interactionMap1;
+                    destination = _interactionMap2;
+                }
+                else
+                {
+                    source = _interactionMap2;
+                    destination = _interactionMap1;
+                }
+
+                // Etapa 1: FADE (Desvanecer)
+                // Copia a textura antiga para a nova, aplicando o shader de fade
+                Graphics.Blit(source, destination, _interactionFadeMaterial);
+
+                // Etapa 2: SPLAT (Pintar)
+                // (Nós ainda não implementamos isso)
+
+                // Etapa 3: ATUALIZAR SHADER DA GRAMA
+                // Diz ao shader da grama qual é o mapa de interação mais recente
+                grassMaterial.SetTexture("_InteractionMap", destination); // Envia a textura nova
+
+                // Etapa 4: INVERTER
+                // Prepara para o próximo quadro
+                _isFirstMapActive = !_isFirstMapActive;
+                
+                // --- FIM DO NOVO SISTEMA ---
+            }
+            else
+            {
+                // FALLBACK: Se o material de fade não existe, usa o sistema antigo
+                UpdateInteractionLegacy(); 
+            }
+        }
+        // --- FIM DA LÓGICA DE INTERAÇÃO ---
+
+
+        // 2. LÓGICA DE CULLING E GAMEPLAY (Seu código aqui está correto)
         if (Application.isPlaying)
         {
             if (_activeChunks == null || _activeChunks.Count == 0) return;
 
-            // Inicializamos a câmera principal aqui, se ainda não tivermos
             if (_mainCamera == null)
             {
                 _mainCamera = Camera.main;
                 if (_mainCamera == null)
                 {
                     Debug.LogWarning("⚠️ Câmera principal não encontrada - Culling desabilitado");
-                    return; // Retorna se não houver câmera
+                    return; 
                 }
             }
-            
+
             PerformCulling();
         }
+    }
+    
+    // ... (seu método UpdateWindParameters() aqui) ...
+
+    // RENOMEIE O SEU MÉTODO 'UpdateInteraction' ORIGINAL PARA 'UpdateInteractionLegacy'
+    private void UpdateInteractionLegacy()
+    {
+        if (playerTransform == null || grassMaterial == null) return;
+
+        UnityEngine.Vector3 playerPos = playerTransform.position;
+
+        grassMaterial.SetVector(InteractionPosID,
+            new UnityEngine.Vector4(playerPos.x, playerPos.y, playerPos.z, interactionStrength));
+        grassMaterial.SetFloat(InteractionRadiusID, interactionRadius);
     }
 
     private void UpdateWindParameters()
@@ -612,7 +715,7 @@ public class TerrainGrassGenerator : MonoBehaviour
         float dirZ = Mathf.Sin(windDirRad);
 
         // 3. Monta o Vector4 "correto"
-        _windParams = new Vector4(
+        _windParams = new UnityEngine.Vector4(
             dirX,             // X: Direção X
             windTurbulence,   // Y: Turbulência
             dirZ,             // Z: Direção Z
@@ -630,22 +733,9 @@ public class TerrainGrassGenerator : MonoBehaviour
         }
     }
 
-
-    private void UpdateInteraction()
-    {
-        if (playerTransform == null || grassMaterial == null) return;
-
-        Vector3 playerPos = playerTransform.position;
-
-        grassMaterial.SetVector(InteractionPosID,
-            new Vector4(playerPos.x, playerPos.y, playerPos.z, interactionStrength));
-        grassMaterial.SetFloat(InteractionRadiusID, interactionRadius);
-    }
-
-
     private void PerformCulling()
     {
-        Vector3 camPos = _mainCamera.transform.position;
+        UnityEngine.Vector3 camPos = _mainCamera.transform.position;
 
         foreach (var chunk in _activeChunks)
         {
@@ -653,7 +743,7 @@ public class TerrainGrassGenerator : MonoBehaviour
 
             if (chunk.renderer.isVisible)
             {
-                chunk.distanceToCamera = Vector3.Distance(camPos, chunk.center);
+                chunk.distanceToCamera = UnityEngine.Vector3.Distance(camPos, chunk.center);
 
                 // Definimos o nível de LOD (para os Gizmos)
                 if (chunk.distanceToCamera < lod0Distance)
@@ -740,8 +830,8 @@ public class TerrainGrassGenerator : MonoBehaviour
     }
 
     // Constrói uma lâmina, de um tipo específico declarado pelo usuário
-    private void BuildBladeWithType(List<Vector3> verts, List<int> tris, List<Vector2> uvs, List<Color> colors,
-                        Vector3 position, Quaternion rotation, Color baseColor, float scale, BladeType type)
+    private void BuildBladeWithType(List<UnityEngine.Vector3> verts, List<int> tris, List<UnityEngine.Vector2> uvs, List<Color> colors,
+                        UnityEngine.Vector3 position, UnityEngine.Quaternion rotation, Color baseColor, float scale, BladeType type)
     {
         float h, s, v;
         Color.RGBToHSV(baseColor, out h, out s, out v);
@@ -756,8 +846,8 @@ public class TerrainGrassGenerator : MonoBehaviour
 
     // 
     private void BuildBladeRecursive(
-        List<Vector3> verts, List<int> tris, List<Vector2> uvs, List<Color> colors,
-        int baseVertexIndex, Vector3 position, Quaternion rotation,
+        List<UnityEngine.Vector3> verts, List<int> tris, List<UnityEngine.Vector2> uvs, List<Color> colors,
+        int baseVertexIndex, UnityEngine.Vector3 position, UnityEngine.Quaternion rotation,
         float H, float S, float V,
         int segmentIndex, float baseWidth, float baseHeight,
         float accumHeightPercent, float totalBladeHeight, float originalBaseWidth, BladeType type)
@@ -766,8 +856,8 @@ public class TerrainGrassGenerator : MonoBehaviour
             position.y = _terrain.SampleHeight(position);
 
         // Vértices da base
-        Vector3 v_base_left = new Vector3(-baseWidth / 2, baseHeight, 0);
-        Vector3 v_base_right = new Vector3(baseWidth / 2, baseHeight, 0);
+        UnityEngine.Vector3 v_base_left = new UnityEngine.Vector3(-baseWidth / 2, baseHeight, 0);
+        UnityEngine.Vector3 v_base_right = new UnityEngine.Vector3(baseWidth / 2, baseHeight, 0);
 
         verts.Add(position + rotation * v_base_left);
         verts.Add(position + rotation * v_base_right);
@@ -787,29 +877,29 @@ public class TerrainGrassGenerator : MonoBehaviour
         float vertexHeightNormalized = baseHeight / totalBladeHeight;
         Color corVert = Color.HSVToRGB(H, S, V * brilhoBaseVert);
         corVert.a = vertexHeightNormalized;
-        
+
         colors.Add(corVert);
         colors.Add(corVert);
 
         // UVs
         float u_left = 0.5f - (baseWidth / originalBaseWidth) / 2f;
         float u_right = 0.5f + (baseWidth / originalBaseWidth) / 2f;
-        uvs.Add(new Vector2(u_left, accumHeightPercent));
-        uvs.Add(new Vector2(u_right, accumHeightPercent));
+        uvs.Add(new UnityEngine.Vector2(u_left, accumHeightPercent));
+        uvs.Add(new UnityEngine.Vector2(u_right, accumHeightPercent));
 
         int currentBaseVertexIndex = verts.Count - 2;
 
         // Caso final: ponta
         if (segmentIndex >= type.segments.Count)
         {
-            Vector3 v_tip = new Vector3(0, totalBladeHeight, 0);
+            UnityEngine.Vector3 v_tip = new UnityEngine.Vector3(0, totalBladeHeight, 0);
             verts.Add(position + rotation * v_tip);
 
             float brilhoTopo = type.habilitarGradiente ? type.brilhoPonta : 1f;
             Color corTopo = Color.HSVToRGB(H, S, V * brilhoTopo);
             corTopo.a = 1f;
             colors.Add(corTopo);
-            uvs.Add(new Vector2(0.5f, 1f));
+            uvs.Add(new UnityEngine.Vector2(0.5f, 1f));
 
             int tipIndex = verts.Count - 1;
             tris.Add(currentBaseVertexIndex);
@@ -824,8 +914,8 @@ public class TerrainGrassGenerator : MonoBehaviour
         float newAccumHeightPercent = Mathf.Min(1f, accumHeightPercent + seg.heightPercentual);
         float topHeight = totalBladeHeight * newAccumHeightPercent;
 
-        Vector3 v_top_left = new Vector3(-topWidth / 2, topHeight, 0);
-        Vector3 v_top_right = new Vector3(topWidth / 2, topHeight, 0);
+        UnityEngine.Vector3 v_top_left = new UnityEngine.Vector3(-topWidth / 2, topHeight, 0);
+        UnityEngine.Vector3 v_top_right = new UnityEngine.Vector3(topWidth / 2, topHeight, 0);
         verts.Add(position + rotation * v_top_left);
         verts.Add(position + rotation * v_top_right);
 
@@ -841,8 +931,8 @@ public class TerrainGrassGenerator : MonoBehaviour
 
         float u_top_left = 0.5f - (topWidth / originalBaseWidth) / 2f;
         float u_top_right = 0.5f + (topWidth / originalBaseWidth) / 2f;
-        uvs.Add(new Vector2(u_top_left, newAccumHeightPercent));
-        uvs.Add(new Vector2(u_top_right, newAccumHeightPercent));
+        uvs.Add(new UnityEngine.Vector2(u_top_left, newAccumHeightPercent));
+        uvs.Add(new UnityEngine.Vector2(u_top_right, newAccumHeightPercent));
 
         int topVertexIndex = verts.Count - 2;
         tris.Add(currentBaseVertexIndex);
